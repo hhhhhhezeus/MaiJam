@@ -53,6 +53,8 @@ python examples/offline_demo.py --output demo
 
 ## WebUI 工作台
 
+WebUI 操作等同于 Dashboard 的 owner 操作，不受 `admins` 白名单限制；能够登录 Dashboard 的用户可控制工作台并读取生成的音频。请只向可信人员开放 Dashboard。
+
 `webui.json` 使用官方文档的 schema v2 自定义页面，所有查询和操作通过本插件声明的静态 `@API`。页面显示群、风格、BPM、调性、小节、活跃度、成员、各声部音量及静音，并提供开始、停止、风格切换、30 秒录制和录音试听。试听通过 API 分片读取生成的 WAV，加载后需要用户点击播放器。
 
 此协议需要配套的 MaiBot Host 与 Dashboard；不是所有现有安装都具备 v2 `custom_pages`。当前环境未运行这些组件，页面注册、桥接、CSP 下的 blob 音频和真实按钮交互**尚未完成宿主实测**。API 处理函数已在真实 SDK 的模拟上下文中验证。宿主不支持页面时，离线生成和群命令仍可使用；不存在对外开放的独立 Web 服务。
@@ -101,3 +103,7 @@ Windows PowerShell 示例：在 `MaiJam` 目录的上一级执行 `$env:PYTHONPA
 经过真实适配器验证后增加 QQ 音频投递；更多和弦与音色、分段导出、音乐主题和 WebUI 波形；持久化的匿名化统计和更精细的成员贡献映射。
 
 MIT License.
+
+## 本次审核修复
+
+修改内容、可复现测试和未完成的真实 Host 验证见 [审核修复记录](REVIEW_FIXES.md)。
