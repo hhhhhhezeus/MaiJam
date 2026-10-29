@@ -1,0 +1,1 @@
+# MaiBot supplies maibot-plugin-sdk. The music engine uses Python standard library only.

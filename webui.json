@@ -1,0 +1,22 @@
+{
+  "schema_version": 2,
+  "required_capabilities": ["custom_pages"],
+  "pages": [{
+    "id": "studio", "title": "MaiJam 工作台", "placement": "sidebar", "icon": "chart",
+    "mode": "custom", "entry": "webui/index.html", "layout": "document",
+    "queries": {
+      "snapshot": {"api": "studio_snapshot", "version": "1"},
+      "audio": {"api": "audio_chunk", "version": "1", "parameters": {
+        "group": {"type": "string", "required": true, "max_length": 200},
+        "offset": {"type": "integer", "required": true, "minimum": 0, "maximum": 4000000}
+      }}
+    },
+    "actions": {
+      "control": {"api": "studio_control", "version": "1", "parameters": {
+        "group": {"type": "string", "required": true, "max_length": 200},
+        "operation": {"type": "string", "required": true, "choices": ["start", "stop", "style", "record", "mute", "level"]},
+        "value": {"type": "string", "max_length": 100}
+      }}
+    }
+  }]
+}

@@ -1,0 +1,18 @@
+[plugin]
+config_version = "1.0.0"
+admins = []
+bot_ids = []
+window_seconds = 30
+user_cap = 5
+max_queue = 512
+energy_scale = 18.0
+smoothing = 0.35
+fill_scale = 3.0
+accent_scale = 8.0
+active_users_scale = 5
+max_members = 32
+sleep_seconds = 900
+cooldown_seconds = 30
+max_record_seconds = 60
+max_parallel_recordings = 2
+retention_days = 7

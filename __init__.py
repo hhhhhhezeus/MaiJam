@@ -1,0 +1,1 @@
+"""MaiJam plugin package."""

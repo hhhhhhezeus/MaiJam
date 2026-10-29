@@ -1,0 +1,7 @@
+/config.toml
+__pycache__/
+*.py[cod]
+.venv/
+demo/*.wav
+demo/*.mid
+demo/*events.json
