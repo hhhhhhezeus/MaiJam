@@ -2,7 +2,7 @@
 
 MaiJam 把群聊互动转换成可复现的音乐控制事件，按小节生成原创鼓组、低音、和弦与旋律。音乐合成在本地完成，不调用 LLM、TTS、Embedding 或第三方生成 API，不需要 GPU 和 API Key。
 
-**当前版本：0.1.1，开发预览。** 离线核心与真实 SDK 2.20.0 的模拟宿主集成测试已运行；实际 MaiBot Host、QQ 适配器和宿主 WebUI 页面尚未联调。Manifest 中 Host 范围是待实机验证的目标范围，不代表整个区间均已验证。
+**当前版本：0.1.2，开发预览。** 离线核心与真实 SDK 2.20.0 的模拟宿主集成测试已运行；实际 MaiBot Host、QQ 适配器和宿主 WebUI 页面尚未联调。Manifest 中 Host 范围是待实机验证的目标范围，不代表整个区间均已验证。
 
 ## 立即离线试听
 
@@ -53,7 +53,7 @@ python examples/offline_demo.py --output demo
 
 ## WebUI 工作台
 
-WebUI 操作等同于 Dashboard 的 owner 操作，不受 `admins` 白名单限制；能够登录 Dashboard 的用户可控制工作台并读取生成的音频。请只向可信人员开放 Dashboard。
+WebUI 操作等同于 Dashboard 的 owner 操作，不受 `admins` 白名单限制；能够登录 Dashboard 的用户可控制工作台并读取生成的音频。工作台快照一次返回所有已登记群的乐队信息，包括成员用户 ID、风格与混音状态；能登录 Dashboard 的人可以查看这些跨群信息。请只向可信人员开放 Dashboard。
 
 `webui.json` 使用官方文档的 schema v2 自定义页面，所有查询和操作通过本插件声明的静态 `@API`。页面显示群、风格、BPM、调性、小节、活跃度、成员、各声部音量及静音，并提供开始、停止、风格切换、30 秒录制和录音试听。试听通过 API 分片读取生成的 WAV，加载后需要用户点击播放器。
 
@@ -108,4 +108,4 @@ MIT License.
 
 修改内容、可复现测试和未完成的真实 Host 验证见 [审核修复记录](REVIEW_FIXES.md)。
 
-审核修复发行版本：`v0.1.1`。请从 Releases 下载此版本；`v0.1.0` 不包含本轮修复。
+审核修复发行版本：`v0.1.2`。请从 Releases 下载此版本；`v0.1.0` 不包含本轮修复。
