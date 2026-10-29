@@ -147,6 +147,18 @@ class MaiJam(MaiBotPlugin):
         s['last_export'] = time.time(); self.manager.save()
         self.jobs[key] = asyncio.create_task(self._record(p, g, seconds), name='maijam-record')
 
+    async def cancel_record(self, p, g):
+        key = self.manager.key(p, g)
+        task = self.jobs.get(key)
+        if task is None or task.done():
+            return False
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        # A task cancelled before its first step never executes its finally block.
+        if self.jobs.get(key) is task:
+            self.jobs.pop(key, None)
+        return True
+
     async def _record(self, p, g, seconds):
         key = self.manager.key(p, g); s = self.manager.ensure(p, g)
         try:
@@ -199,7 +211,7 @@ class MaiJam(MaiBotPlugin):
         args = str((matched_groups or {}).get('args') or '').split()
         action = args[0].lower() if args else 'help'
         try:
-            if action in ('start', 'stop', 'style', 'record', 'export') and not self.is_admin(p, u):
+            if action in ('start', 'stop', 'style', 'record', 'cancel', 'export') and not self.is_admin(p, u):
                 raise ValueError('需要插件配置的管理员白名单权限。')
             s = self.manager.ensure(p, g)
             if action == 'start':
@@ -208,8 +220,7 @@ class MaiJam(MaiBotPlugin):
                 text = '🎵 MaiJam 已开启。群友发送 /jam join 加入。请确认已配置 bot_ids。'
             elif action == 'stop':
                 self.manager.stop(p, g)
-                task = self.jobs.get(self.manager.key(p,g))
-                if task: task.cancel()
+                await self.cancel_record(p, g)
                 text = '🎵 会话已停止，待完成的录制已取消。'
             elif action == 'join':
                 self.manager.join(p, g, u, args[1] if len(args)>1 else 'lead')
@@ -229,6 +240,9 @@ class MaiJam(MaiBotPlugin):
             elif action == 'record':
                 if len(args)<2 or not args[1].isdigit(): raise ValueError('用法：/jam record 30')
                 self.begin_record(p,g,int(args[1])); text = '🎵 开始记录聚合状态，完成后在插件数据目录导出 WAV 和 MIDI。'
+            elif action == 'cancel':
+                cancelled = await self.cancel_record(p, g)
+                text = '🎵 录制已取消，乐队继续演奏。' if cancelled else '🎵 当前没有录制任务。'
             elif action == 'export':
                 kind = args[1].lower() if len(args)>1 else ''
                 if kind not in ('wav','midi'): raise ValueError('用法：/jam export wav|midi')
@@ -239,7 +253,7 @@ class MaiJam(MaiBotPlugin):
             elif action == 'status':
                 c=s['controls'][-1] if s['controls'] else {}; text=f"🎵 {'进行中' if s['running'] else '已停止'} · {s['style']} · {STYLES[s['style']]['bpm']} BPM · 小节 {s['bar']} · 能量 {c.get('energy',0):.2f}"
             else:
-                text='🎵 /jam start|stop|status|join|leave|members\n/jam instrument drums|bass|lead|chords|arp|fx\n/jam style lofi|synthwave|chiptune|house\n/jam record 30 · /jam export wav|midi\nstart、stop、style、record、export 需要管理员白名单。'
+                text='🎵 /jam start|stop|status|join|leave|members\n/jam instrument drums|bass|lead|chords|arp|fx\n/jam style lofi|synthwave|chiptune|house\n/jam record 30 · /jam cancel · /jam export wav|midi\nstart、stop、style、record、cancel、export 需要管理员白名单。'
             return await self.send(stream_id,text)
         except (ValueError, OSError) as e:
             return await self.send(stream_id,'🎵 '+str(e))
@@ -259,10 +273,10 @@ class MaiJam(MaiBotPlugin):
         if operation=='start': self.manager.start(p,g,s['stream_id'])
         elif operation=='stop':
             self.manager.stop(p,g)
-            task=self.jobs.get(group)
-            if task: task.cancel()
+            await self.cancel_record(p, g)
         elif operation=='style': self.manager.style(p,g,value)
         elif operation=='record': self.begin_record(p,g,int(value))
+        elif operation=='cancel': await self.cancel_record(p,g)
         elif operation=='mute':
             if value not in TRACKS: raise ValueError('未知声部。')
             s['mute'] = [x for x in s['mute'] if x != value] if value in s['mute'] else s['mute']+[value]

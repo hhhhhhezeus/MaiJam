@@ -85,6 +85,25 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         await self.command('stop'); await asyncio.gather(job,return_exceptions=True)
         self.assertFalse(self.plugin.manager.groups['qq:group']['last_file'])
 
+    async def test_cancel_requires_admin_and_keeps_session_running(self):
+        await self.command('start'); await self.command('record 5')
+        job = self.plugin.jobs['qq:group']
+        await self.command('cancel', user='member')
+        self.assertIn('权限', self.send.sent[-1][0])
+        self.assertFalse(job.cancelled())
+        await self.command('cancel')
+        self.assertTrue(job.cancelled())
+        self.assertTrue(self.plugin.manager.groups['qq:group']['running'])
+        self.assertNotIn('qq:group', self.plugin.jobs)
+        self.assertFalse(self.plugin.manager.groups['qq:group']['last_file'])
+        await self.command('cancel')
+        self.assertIn('没有录制', self.send.sent[-1][0])
+        await self.command('record 5')
+        await asyncio.sleep(.02)
+        await self.plugin.studio_control('qq:group', 'cancel')
+        self.assertNotIn('qq:group', self.plugin.jobs)
+        self.assertTrue(self.plugin.manager.groups['qq:group']['running'])
+
     async def test_hot_config_update_and_no_llm(self):
         self.plugin.set_plugin_config({'plugin':{'config_version':'1.0.0','admins':['qq:admin'],'bot_ids':['qq:bot'],'user_cap':2}})
         await self.plugin.on_config_update('self',{},'1.0.0')

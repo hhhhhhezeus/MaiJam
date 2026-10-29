@@ -46,6 +46,7 @@ python examples/offline_demo.py --output demo
 | `/jam members` | 查看成员及休眠状态 | 群成员 |
 | `/jam style lofi` | 切换 `lofi`、`synthwave`、`chiptune`、`house` | 白名单管理员 |
 | `/jam record 30` | 收集接下来 30 秒的聚合状态并后台合成 | 白名单管理员 |
+| `/jam cancel` | 取消当前录制，保持乐队运行；已有导出文件保留，冷却时间仍生效 | 白名单管理员 |
 | `/jam export wav` / `/jam export midi` | 报告已完成文件的宿主路径 | 白名单管理员 |
 | `/jam help` | 显示命令 | 群成员 |
 
