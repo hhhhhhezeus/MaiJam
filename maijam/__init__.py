@@ -1,0 +1,1 @@
+"""MaiJam music engine package."""
