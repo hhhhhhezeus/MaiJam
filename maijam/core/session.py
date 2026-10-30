@@ -110,10 +110,11 @@ class SessionManager:
         if not s['enabled']: raise ValueError('本群尚未启用 MaiJam。')
         s['style'] = name; self.save()
 
-    def safe_export_dir(self, platform, group):
+    def safe_export_dir(self, platform, group, *, create=True):
         group_hash = hashlib.sha256(self.key(platform, group).encode()).hexdigest()[:24]
         result = self.root / 'exports' / group_hash
-        result.mkdir(parents=True, exist_ok=True)
+        if create:
+            result.mkdir(parents=True, exist_ok=True)
         return result
 
     def cleanup(self, max_age_seconds=7*86400, max_files=24, now=None):

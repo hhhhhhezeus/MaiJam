@@ -168,7 +168,9 @@ class MaiJam(MaiBotPlugin):
         return status
 
     def recordings(self, p, g):
-        folder = self.manager.safe_export_dir(p, g)
+        folder = self.manager.safe_export_dir(p, g, create=False)
+        if folder.is_symlink() or folder.parent.is_symlink() or not folder.is_dir():
+            return []
         records = []
         active = self.record_states.get(self.manager.key(p, g), {})
         for wav in folder.glob('jam-*.wav'):

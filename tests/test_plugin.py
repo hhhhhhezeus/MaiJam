@@ -106,6 +106,14 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('qq:group', self.plugin.jobs)
         self.assertTrue(self.plugin.manager.groups['qq:group']['running'])
 
+    async def test_snapshot_does_not_create_export_directories(self):
+        await self.command('start')
+        folder = self.plugin.manager.safe_export_dir('qq', 'group', create=False)
+        self.assertFalse(folder.exists())
+        snapshot = await self.plugin.studio_snapshot()
+        self.assertEqual(snapshot['groups'][0]['recordings'], [])
+        self.assertFalse(folder.exists())
+
     async def test_history_scoped_and_validated(self):
         await self.command('start')
         folder = self.plugin.manager.safe_export_dir('qq', 'group')
