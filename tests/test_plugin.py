@@ -71,6 +71,8 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         await asyncio.wait_for(asyncio.shield(task), timeout=15)
         session=self.plugin.manager.groups['qq:group']
         self.assertTrue(session['last_file'])
+        self.assertEqual(self.plugin.recording_status('qq:group')['stage'], 'completed')
+        self.assertEqual(self.plugin.recordings('qq','group')[0]['id'], session['last_file'])
         folder=self.plugin.manager.safe_export_dir('qq','group')
         self.assertTrue((folder / (session['last_file']+'.wav')).is_file())
         self.assertTrue((folder / (session['last_file']+'.mid')).is_file())
@@ -84,6 +86,59 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         job=self.plugin.jobs['qq:group']; await asyncio.sleep(.02)
         await self.command('stop'); await asyncio.gather(job,return_exceptions=True)
         self.assertFalse(self.plugin.manager.groups['qq:group']['last_file'])
+
+    async def test_cancel_requires_admin_and_keeps_session_running(self):
+        await self.command('start'); await self.command('record 5')
+        job = self.plugin.jobs['qq:group']
+        await self.command('cancel', user='member')
+        self.assertIn('权限', self.send.sent[-1][0])
+        self.assertFalse(job.cancelled())
+        await self.command('cancel')
+        self.assertTrue(job.cancelled())
+        self.assertTrue(self.plugin.manager.groups['qq:group']['running'])
+        self.assertNotIn('qq:group', self.plugin.jobs)
+        self.assertFalse(self.plugin.manager.groups['qq:group']['last_file'])
+        await self.command('cancel')
+        self.assertIn('没有录制', self.send.sent[-1][0])
+        await self.command('record 5')
+        await asyncio.sleep(.02)
+        await self.plugin.studio_control('qq:group', 'cancel')
+        self.assertNotIn('qq:group', self.plugin.jobs)
+        self.assertTrue(self.plugin.manager.groups['qq:group']['running'])
+
+    async def test_snapshot_does_not_create_export_directories(self):
+        await self.command('start')
+        folder = self.plugin.manager.safe_export_dir('qq', 'group', create=False)
+        self.assertFalse(folder.exists())
+        snapshot = await self.plugin.studio_snapshot()
+        self.assertEqual(snapshot['groups'][0]['recordings'], [])
+        self.assertFalse(folder.exists())
+
+    async def test_history_scoped_and_validated(self):
+        await self.command('start')
+        folder = self.plugin.manager.safe_export_dir('qq', 'group')
+        (folder/'jam-123.wav').write_bytes(b'test-audio')
+        (folder/'jam-123.mid').write_bytes(b'midi')
+        records = self.plugin.recordings('qq', 'group')
+        self.assertEqual([r['id'] for r in records], ['jam-123'])
+        part = await self.plugin.audio_chunk('qq:group', 0, 'jam-123')
+        self.assertTrue(part['done'])
+        await self.command('start', group='other')
+        self.assertEqual(self.plugin.recordings('qq', 'other'), [])
+        for key, recording in [('qq:group','../jam-123'), ('qq:other','jam-123')]:
+            with self.assertRaises(ValueError): await self.plugin.audio_chunk(key, 0, recording)
+        await self.command('history', user='member')
+        self.assertIn('权限', self.send.sent[-1][0])
+        await self.command('history')
+        self.assertIn('jam-123', self.send.sent[-1][0])
+        await self.command('export wav jam-123')
+        self.assertIn('jam-123.wav', self.send.sent[-1][0])
+        await self.command('record 5')
+        status = self.plugin.recording_status('qq:group')
+        self.assertEqual(status['stage'], 'collecting')
+        self.assertLessEqual(status['remaining_seconds'], 5)
+        await self.command('cancel')
+        self.assertEqual(self.plugin.recording_status('qq:group')['stage'], 'cancelled')
 
     async def test_hot_config_update_and_no_llm(self):
         self.plugin.set_plugin_config({'plugin':{'config_version':'1.0.0','admins':['qq:admin'],'bot_ids':['qq:bot'],'user_cap':2}})

@@ -76,7 +76,7 @@ class MaiJam(MaiBotPlugin):
     async def on_load(self):
         self.manager = SessionManager(self.ctx.paths.data_dir, self.mapper_config(), self.config.plugin.max_members, self.config.plugin.sleep_seconds)
         self.manager.cleanup(self.config.plugin.retention_days * 86400)
-        self.jobs = {}; self.deadlines = {}; self.closing = False
+        self.jobs = {}; self.record_states = {}; self.deadlines = {}; self.closing = False
         self.ticker = asyncio.create_task(self._ticker(), name='maijam-ticker')
         self.cleaner = asyncio.create_task(self._cleaner(), name='maijam-cleaner')
 
@@ -145,7 +145,46 @@ class MaiJam(MaiBotPlugin):
         if sum(not task.done() for task in self.jobs.values()) >= self.config.plugin.max_parallel_recordings: raise ValueError('录制任务已达到全局上限，请稍后再试。')
         if time.time() - s['last_export'] < self.config.plugin.cooldown_seconds: raise ValueError('录制冷却中。')
         s['last_export'] = time.time(); self.manager.save()
+        self.record_states[key] = {'stage': 'collecting', 'deadline': time.monotonic() + seconds}
         self.jobs[key] = asyncio.create_task(self._record(p, g, seconds), name='maijam-record')
+
+    async def cancel_record(self, p, g):
+        key = self.manager.key(p, g)
+        task = self.jobs.get(key)
+        if task is None or task.done():
+            return False
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        # A task cancelled before its first step never executes its finally block.
+        if self.jobs.get(key) is task:
+            self.jobs.pop(key, None)
+        self.record_states[key] = {'stage': 'cancelled'}
+        return True
+
+    def recording_status(self, key):
+        status = dict(self.record_states.get(key, {'stage': 'idle'}))
+        if status['stage'] == 'collecting':
+            status['remaining_seconds'] = max(0, math.ceil(status.pop('deadline') - time.monotonic()))
+        return status
+
+    def recordings(self, p, g):
+        folder = self.manager.safe_export_dir(p, g, create=False)
+        if folder.is_symlink() or folder.parent.is_symlink() or not folder.is_dir():
+            return []
+        records = []
+        active = self.record_states.get(self.manager.key(p, g), {})
+        for wav in folder.glob('jam-*.wav'):
+            if active.get('stage') == 'rendering' and active.get('recording') == wav.stem: continue
+            midi = wav.with_suffix('.mid')
+            if not re.fullmatch(r'jam-\d+', wav.stem) or wav.is_symlink() or midi.is_symlink():
+                continue
+            try:
+                if not wav.is_file() or not midi.is_file(): continue
+                stat = wav.stat()
+                records.append({'id': wav.stem, 'created_at': stat.st_mtime, 'bytes': stat.st_size})
+            except FileNotFoundError:
+                continue
+        return sorted(records, key=lambda item: item['created_at'], reverse=True)[:24]
 
     async def _record(self, p, g, seconds):
         key = self.manager.key(p, g); s = self.manager.ensure(p, g)
@@ -155,6 +194,7 @@ class MaiJam(MaiBotPlugin):
                 await asyncio.sleep(min(1, seconds - (time.monotonic() - started)))
                 if self.closing or not s['running']: raise asyncio.CancelledError
             if s['style'] != start_style: raise ValueError('录制期间风格改变，请重新录制。')
+            self.record_states[key] = {'stage': 'rendering'}
             count = max(1, math.floor(seconds * STYLES[start_style]['bpm'] / 240))
             available = min(count, max(0, s['bar'] - start_bar))
             controls = list(s['controls'][-available:]) if available else []
@@ -162,6 +202,7 @@ class MaiJam(MaiBotPlugin):
             score = compose(start_style, s['seed'] + start_bar, count, controls, mute=s['mute'], levels=s['levels'])
             folder = self.manager.safe_export_dir(p, g)
             stem = 'jam-' + str(time.time_ns())
+            self.record_states[key]['recording'] = stem
             wav, midi = folder / (stem+'.wav'), folder / (stem+'.mid')
             def work():
                 try:
@@ -180,12 +221,18 @@ class MaiJam(MaiBotPlugin):
                 wav.unlink(missing_ok=True); midi.unlink(missing_ok=True)
                 raise
             s['last_file'] = stem; self.manager.save()
+            self.record_states[key] = {'stage': 'completed', 'recording': stem}
             self.manager.cleanup(self.config.plugin.retention_days * 86400)
             if s.get('stream_id'):
-                await self.ctx.send.text('🎵 录制完成。'+delivery_status()['message'], s['stream_id'])
+                try:
+                    await self.ctx.send.text('🎵 录制完成。'+delivery_status()['message'], s['stream_id'])
+                except Exception:
+                    self.ctx.logger.warning('录音已保存，但完成通知发送失败。', exc_info=True)
         except asyncio.CancelledError:
+            self.record_states[key] = {'stage': 'cancelled'}
             raise
         except Exception as exc:
+            self.record_states[key] = {'stage': 'failed', 'error': str(exc)[:160]}
             self.ctx.logger.exception('MaiJam 录制失败')
             if s.get('stream_id'):
                 await self.ctx.send.text('🎵 录制失败：'+str(exc)[:160], s['stream_id'])
@@ -199,7 +246,7 @@ class MaiJam(MaiBotPlugin):
         args = str((matched_groups or {}).get('args') or '').split()
         action = args[0].lower() if args else 'help'
         try:
-            if action in ('start', 'stop', 'style', 'record', 'export') and not self.is_admin(p, u):
+            if action in ('start', 'stop', 'style', 'record', 'cancel', 'export', 'history') and not self.is_admin(p, u):
                 raise ValueError('需要插件配置的管理员白名单权限。')
             s = self.manager.ensure(p, g)
             if action == 'start':
@@ -208,8 +255,7 @@ class MaiJam(MaiBotPlugin):
                 text = '🎵 MaiJam 已开启。群友发送 /jam join 加入。请确认已配置 bot_ids。'
             elif action == 'stop':
                 self.manager.stop(p, g)
-                task = self.jobs.get(self.manager.key(p,g))
-                if task: task.cancel()
+                await self.cancel_record(p, g)
                 text = '🎵 会话已停止，待完成的录制已取消。'
             elif action == 'join':
                 self.manager.join(p, g, u, args[1] if len(args)>1 else 'lead')
@@ -229,17 +275,28 @@ class MaiJam(MaiBotPlugin):
             elif action == 'record':
                 if len(args)<2 or not args[1].isdigit(): raise ValueError('用法：/jam record 30')
                 self.begin_record(p,g,int(args[1])); text = '🎵 开始记录聚合状态，完成后在插件数据目录导出 WAV 和 MIDI。'
+            elif action == 'cancel':
+                cancelled = await self.cancel_record(p, g)
+                text = '🎵 录制已取消，乐队继续演奏。' if cancelled else '🎵 当前没有录制任务。'
+            elif action == 'history':
+                records = self.recordings(p, g)
+                text = '🎵 历史录音：\n' + ('\n'.join(x['id'] for x in records) if records else '暂无已完成的录音。')
             elif action == 'export':
                 kind = args[1].lower() if len(args)>1 else ''
                 if kind not in ('wav','midi'): raise ValueError('用法：/jam export wav|midi')
-                if not s['last_file']: raise ValueError('还没有录制，请先 /jam record 30。')
-                path = self.manager.safe_export_dir(p,g) / (s['last_file'] + ('.mid' if kind=='midi' else '.wav'))
-                if not path.is_file(): raise ValueError('文件不存在或已按保留策略清理。')
+                recording = args[2] if len(args) > 2 else s['last_file']
+                if recording and not re.fullmatch(r'jam-\d+', recording): raise ValueError('录音编号无效。')
+                if not recording: raise ValueError('还没有录制，请先 /jam record 30。')
+                path = self.manager.safe_export_dir(p,g) / (recording + ('.mid' if kind=='midi' else '.wav'))
+                if path.is_symlink() or not path.is_file(): raise ValueError('文件不存在或已按保留策略清理。')
                 text = '🎵 导出文件位于宿主插件数据目录：'+str(path)+'\n'+delivery_status()['message']
             elif action == 'status':
                 c=s['controls'][-1] if s['controls'] else {}; text=f"🎵 {'进行中' if s['running'] else '已停止'} · {s['style']} · {STYLES[s['style']]['bpm']} BPM · 小节 {s['bar']} · 能量 {c.get('energy',0):.2f}"
+                state = self.recording_status(self.manager.key(p, g))
+                labels = {'idle':'未录制','collecting':'收集中','rendering':'生成音频中','completed':'完成','cancelled':'已取消','failed':'失败'}
+                text += '\n录制：' + labels[state['stage']] + (f"，剩余 {state['remaining_seconds']} 秒" if 'remaining_seconds' in state else '')
             else:
-                text='🎵 /jam start|stop|status|join|leave|members\n/jam instrument drums|bass|lead|chords|arp|fx\n/jam style lofi|synthwave|chiptune|house\n/jam record 30 · /jam export wav|midi\nstart、stop、style、record、export 需要管理员白名单。'
+                text='🎵 /jam start|stop|status|join|leave|members\n/jam instrument drums|bass|lead|chords|arp|fx\n/jam style lofi|synthwave|chiptune|house\n/jam record 30 · /jam cancel · /jam history · /jam export wav|midi [录音编号]\nstart、stop、style、record、cancel、export、history 需要管理员白名单。'
             return await self.send(stream_id,text)
         except (ValueError, OSError) as e:
             return await self.send(stream_id,'🎵 '+str(e))
@@ -248,7 +305,7 @@ class MaiJam(MaiBotPlugin):
     async def studio_snapshot(self):
         result=[]
         for key,s in self.manager.groups.items():
-            result.append({'key': key, 'platform': s['platform'], 'group_id': s['group_id'], 'running': s['running'], 'style': s['style'], 'bpm': STYLES[s['style']]['bpm'], 'root': STYLES[s['style']]['key'], 'bar': s['bar'], 'control': s['controls'][-1] if s['controls'] else {}, 'members': s['members'], 'levels': s['levels'], 'mute': s['mute'], 'last_file': bool(s['last_file']), 'recording': key in self.jobs})
+            result.append({'key': key, 'platform': s['platform'], 'group_id': s['group_id'], 'running': s['running'], 'style': s['style'], 'bpm': STYLES[s['style']]['bpm'], 'root': STYLES[s['style']]['key'], 'bar': s['bar'], 'control': s['controls'][-1] if s['controls'] else {}, 'members': s['members'], 'levels': s['levels'], 'mute': s['mute'], 'last_file': bool(s['last_file']), 'recording': key in self.jobs, 'record_status': self.recording_status(key), 'recordings': self.recordings(s['platform'], s['group_id'])})
         return {'groups': result, 'tracks': list(TRACKS), 'styles': list(STYLES)}
 
     @API('studio_control', version='1')
@@ -259,10 +316,10 @@ class MaiJam(MaiBotPlugin):
         if operation=='start': self.manager.start(p,g,s['stream_id'])
         elif operation=='stop':
             self.manager.stop(p,g)
-            task=self.jobs.get(group)
-            if task: task.cancel()
+            await self.cancel_record(p, g)
         elif operation=='style': self.manager.style(p,g,value)
         elif operation=='record': self.begin_record(p,g,int(value))
+        elif operation=='cancel': await self.cancel_record(p,g)
         elif operation=='mute':
             if value not in TRACKS: raise ValueError('未知声部。')
             s['mute'] = [x for x in s['mute'] if x != value] if value in s['mute'] else s['mute']+[value]
@@ -277,11 +334,13 @@ class MaiJam(MaiBotPlugin):
         return {'ok': True}
 
     @API('audio_chunk', version='1')
-    async def audio_chunk(self, group: str, offset: int = 0):
+    async def audio_chunk(self, group: str, offset: int = 0, recording: str = ""):
         s=self.manager.groups.get(group)
-        if not s or not s['last_file'] or offset < 0 or offset > 4_000_000: raise ValueError('没有可播放的录音。')
-        path=self.manager.safe_export_dir(s['platform'],s['group_id']) / (s['last_file']+'.wav')
-        if not path.exists() or path.stat().st_size > 4_000_000: raise ValueError('录音已清理或超过上限。')
+        if not s or not (recording or s['last_file']) or offset < 0 or offset > 4_000_000: raise ValueError('没有可播放的录音。')
+        recording = recording or s['last_file']
+        if not re.fullmatch(r'jam-\d+', recording): raise ValueError('录音编号无效。')
+        path=self.manager.safe_export_dir(s['platform'],s['group_id']) / (recording+'.wav')
+        if path.is_symlink() or not path.is_file() or path.stat().st_size > 4_000_000: raise ValueError('录音已清理或超过上限。')
         with path.open('rb') as f:
             f.seek(offset); data=f.read(96000)
         return {'base64':base64.b64encode(data).decode('ascii'), 'next':offset+len(data), 'done':offset+len(data)>=path.stat().st_size}
