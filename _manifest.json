@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "id": "github.hhhhhhezeus.maijam",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "name": "MaiJam 群聊协作乐队",
   "description": "通过规则聚合群聊互动，本地生成原创分轨音乐；不调用 LLM，支持 WAV 与 MIDI 导出。",
   "author": {"name": "hhhhhhezeus", "url": "https://github.com/hhhhhhezeus"},
